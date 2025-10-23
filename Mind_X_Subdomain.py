@@ -960,18 +960,48 @@ def load_domains_from_file(filename):
     return domains
 
 
+def process_single_domain(domain, existing_domains, config, args):
+    """Process a single domain and return results"""
+    print(f"\n{Colors.HEADER}[*] Target Domain: {domain}{Colors.ENDC}")
+
+    hunter = SubdomainHunter(
+        domain=domain,
+        config=config,
+        existing_domains=existing_domains,
+        rate_limit=args.rate_limit
+    )
+
+    new_domains = hunter.run_all(modules=args.modules)
+    return new_domains
+
+
 def main():
     print_banner()
 
     parser = argparse.ArgumentParser(
         description='Mind_X_Subdomain - Advanced Subdomain Discovery Tool',
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Single domain:
+    python3 %(prog)s -d paypal.com -o results.txt
+
+  Multiple domains from file:
+    python3 %(prog)s -l domains.txt -o results/
+
+  With existing subdomains:
+    python3 %(prog)s -d paypal.com -f existing.txt -o new_finds.txt
+
+  Specific modules only:
+    python3 %(prog)s -l domains.txt -m cloud javascript ct -o results/
+        """
     )
 
     parser.add_argument('-d', '--domain', help='Target domain (e.g., paypal.com)')
-    parser.add_argument('-f', '--file', help='File containing existing subdomains')
+    parser.add_argument('-l', '--list', help='File containing list of target domains (one per line)')
+    parser.add_argument('-f', '--file', help='File containing existing subdomains to filter out')
     parser.add_argument('-o', '--output', default='new_subdomains.txt',
-                       help='Output file for new discoveries')
+                       help='Output file/directory for discoveries')
     parser.add_argument('-c', '--config', default='config.json',
                        help='Config file with API keys')
     parser.add_argument('-r', '--rate-limit', type=float, default=1.0,
@@ -985,10 +1015,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate arguments
-    if not args.domain:
-        print(f"{Colors.FAIL}[-] Error: --domain is required{Colors.ENDC}")
+    # Validate arguments - must have either -d or -l
+    if not args.domain and not args.list:
+        print(f"{Colors.FAIL}[-] Error: Either --domain or --list is required{Colors.ENDC}")
         parser.print_help()
+        sys.exit(1)
+
+    if args.domain and args.list:
+        print(f"{Colors.FAIL}[-] Error: Cannot use both --domain and --list together{Colors.ENDC}")
+        print(f"{Colors.WARNING}[!] Use --domain for single domain OR --list for multiple domains{Colors.ENDC}")
         sys.exit(1)
 
     # Load configuration
@@ -998,32 +1033,117 @@ def main():
     existing_domains = set()
     if args.file:
         existing_domains = load_domains_from_file(args.file)
-        print(f"{Colors.OKGREEN}[+] Loaded {len(existing_domains)} existing domains{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] Loaded {len(existing_domains)} existing subdomains to filter{Colors.ENDC}")
 
-    # Initialize hunter
-    hunter = SubdomainHunter(
-        domain=args.domain,
-        config=config,
-        existing_domains=existing_domains,
-        rate_limit=args.rate_limit
-    )
+    # MODE 1: Single domain
+    if args.domain:
+        new_domains = process_single_domain(args.domain, existing_domains, config, args)
 
-    # Run discovery
-    new_domains = hunter.run_all(modules=args.modules)
+        # Save results
+        if new_domains:
+            with open(args.output, 'w') as f:
+                for domain in sorted(new_domains):
+                    f.write(f"{domain}\n")
 
-    # Save results
-    if new_domains:
-        with open(args.output, 'w') as f:
-            for domain in sorted(new_domains):
-                f.write(f"{domain}\n")
+            print(f"\n{Colors.OKGREEN}{'='*60}{Colors.ENDC}")
+            print(f"{Colors.OKGREEN}[+] Discovery Complete!{Colors.ENDC}")
+            print(f"{Colors.OKGREEN}[+] Found {len(new_domains)} NEW subdomains{Colors.ENDC}")
+            print(f"{Colors.OKGREEN}[+] Saved to: {args.output}{Colors.ENDC}")
+            print(f"{Colors.OKGREEN}{'='*60}{Colors.ENDC}")
+        else:
+            print(f"\n{Colors.WARNING}[!] No new subdomains discovered{Colors.ENDC}")
 
+    # MODE 2: Multiple domains from list
+    elif args.list:
+        # Load target domains from list
+        try:
+            with open(args.list, 'r') as f:
+                target_domains = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        except FileNotFoundError:
+            print(f"{Colors.FAIL}[-] Error: Domain list file not found: {args.list}{Colors.ENDC}")
+            sys.exit(1)
+
+        if not target_domains:
+            print(f"{Colors.FAIL}[-] Error: No domains found in {args.list}{Colors.ENDC}")
+            sys.exit(1)
+
+        print(f"{Colors.OKGREEN}[+] Loaded {len(target_domains)} target domains{Colors.ENDC}")
+
+        # Create output directory if it doesn't exist
+        output_dir = args.output.rstrip('/')
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            print(f"{Colors.OKGREEN}[+] Created output directory: {output_dir}{Colors.ENDC}")
+
+        # Process each domain
+        total_discovered = 0
+        results_summary = []
+
+        for idx, domain in enumerate(target_domains, 1):
+            print(f"\n{Colors.OKCYAN}{'='*60}{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}[*] Processing [{idx}/{len(target_domains)}]: {domain}{Colors.ENDC}")
+            print(f"{Colors.OKCYAN}{'='*60}{Colors.ENDC}")
+
+            new_domains = process_single_domain(domain, existing_domains, config, args)
+
+            # Save individual domain results
+            output_file = os.path.join(output_dir, f"{domain}_subdomains.txt")
+            if new_domains:
+                with open(output_file, 'w') as f:
+                    for d in sorted(new_domains):
+                        f.write(f"{d}\n")
+
+                count = len(new_domains)
+                total_discovered += count
+                results_summary.append((domain, count, output_file))
+                print(f"{Colors.OKGREEN}[✓] Found {count} new subdomains for {domain}{Colors.ENDC}")
+                print(f"{Colors.OKGREEN}[✓] Saved to: {output_file}{Colors.ENDC}")
+            else:
+                results_summary.append((domain, 0, None))
+                print(f"{Colors.WARNING}[!] No new subdomains for {domain}{Colors.ENDC}")
+
+            # Small delay between domains
+            if idx < len(target_domains):
+                time.sleep(2)
+
+        # Generate summary report
+        summary_file = os.path.join(output_dir, "SUMMARY.txt")
+        with open(summary_file, 'w') as f:
+            f.write("Mind_X Subdomain Discovery - Summary Report\n")
+            f.write(f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*60 + "\n\n")
+
+            for domain, count, filepath in results_summary:
+                f.write(f"{domain:40} : {count:6} subdomains\n")
+                if filepath:
+                    f.write(f"  └─ {filepath}\n")
+
+            f.write("\n" + "="*60 + "\n")
+            f.write(f"TOTAL SUBDOMAINS DISCOVERED: {total_discovered}\n")
+            f.write(f"TOTAL DOMAINS PROCESSED: {len(target_domains)}\n")
+
+        # Combine all results
+        combined_file = os.path.join(output_dir, "ALL_SUBDOMAINS_COMBINED.txt")
+        all_subs = set()
+        for domain, count, filepath in results_summary:
+            if filepath and os.path.exists(filepath):
+                with open(filepath, 'r') as f:
+                    all_subs.update(line.strip() for line in f if line.strip())
+
+        with open(combined_file, 'w') as f:
+            for sub in sorted(all_subs):
+                f.write(f"{sub}\n")
+
+        # Final summary
         print(f"\n{Colors.OKGREEN}{'='*60}{Colors.ENDC}")
-        print(f"{Colors.OKGREEN}[+] Discovery Complete!{Colors.ENDC}")
-        print(f"{Colors.OKGREEN}[+] Found {len(new_domains)} NEW subdomains{Colors.ENDC}")
-        print(f"{Colors.OKGREEN}[+] Saved to: {args.output}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] ALL DOMAINS PROCESSED!{Colors.ENDC}")
         print(f"{Colors.OKGREEN}{'='*60}{Colors.ENDC}")
-    else:
-        print(f"\n{Colors.WARNING}[!] No new subdomains discovered{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] Total subdomains discovered: {total_discovered}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] Unique subdomains (combined): {len(all_subs)}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] Results directory: {output_dir}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] Summary report: {summary_file}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[+] Combined file: {combined_file}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}{'='*60}{Colors.ENDC}")
 
 
 if __name__ == '__main__':
