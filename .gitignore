@@ -1,0 +1,40 @@
+# Test and Report Files
+HONEST_TEST_REPORT.md
+ACTUAL_TEST_RESULTS.md
+VERIFICATION_ALL_METHODS.md
+TAKEOVER_COVERAGE_COMPARISON.md
+COMPLETE_FEATURES.md
+
+# Configuration and API Keys (sensitive data)
+API_KEYS.txt
+config.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Output files
+*.txt
+!requirements.txt
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
